@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, curl, json
+          coverage: none
+      - name: 语法检查
+        run: |
+          # 超级支付要求 PHP 8.2，低版本只检查其余插件
+          if php -r 'exit(PHP_VERSION_ID >= 80000 ? 0 : 1);'; then skip=''; else skip='./superpay/*'; fi
+          find . -name '*.php' -not -path './.git/*' ${skip:+-not -path "$skip"} -print0 | xargs -0 -n1 php -l
+      - name: 测试
+        run: php tests/run.php
+      - name: 打包
+        run: bash scripts/package.sh

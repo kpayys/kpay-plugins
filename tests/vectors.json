@@ -1,0 +1,70 @@
+{
+  "key": "kpay_test_key_0123456789abcdef",
+  "cases": [
+    {
+      "params": {
+        "pid": "1001",
+        "type": "alipay",
+        "out_trade_no": "ORDER_20240501001",
+        "notify_url": "https://your-newapi.com/api/user/epay/notify",
+        "name": "账户充值",
+        "money": "10.00"
+      },
+      "sign": "a2a70b3661171fe9121467bee7ddaeb5"
+    },
+    {
+      "params": {
+        "pid": "1001",
+        "out_trade_no": "202609301234567",
+        "notify_url": "https://shop.example.com/user/api/order/callback.202609301234567",
+        "return_url": "https://shop.example.com/user/index/query?tradeNo=202609301234567",
+        "name": "订单 202609301234567",
+        "money": "0.01",
+        "device": "mobile",
+        "type": "wxpay",
+        "sign_type": "MD5"
+      },
+      "sign": "7a110a4312361fbc65427c10ba42c219"
+    },
+    {
+      "params": {
+        "pid": "1001",
+        "trade_no": "P20260930120000001",
+        "out_trade_no": "2026093012345",
+        "type": "unionpay",
+        "name": "会员 & 充值 = 1",
+        "money": "99.90",
+        "trade_status": "TRADE_SUCCESS",
+        "gross_amount": "100.00",
+        "payable_amount": "99.90",
+        "coupon_discount_amount": "0.10",
+        "return_url": "",
+        "param": "  "
+      },
+      "sign": "1d293af93ad7c9ca1658c560d347f9fc"
+    }
+  ],
+  "hmac": {
+    "secret": "sk_test_0123456789abcdef",
+    "method": "POST",
+    "requestUri": "/pay/api/order/refund",
+    "timestamp": "1790800000",
+    "nonce": "0123456789abcdef0123456789abcdef",
+    "body": "{\"orderNo\":\"P20260930120000001\",\"refundAmount\":1.5,\"refundRequestNo\":\"R2026093012345\",\"reason\":\"易支付后台退款\"}",
+    "bodySha256": "63f052a55ae7e5c4005eeab283bea0dbee969998f74cd971ac818528a19b242d",
+    "signature": "923f4fd8de54744ddff275198e2e76754dc8add2a028cf6dea989a71e0e8864d"
+  },
+  "hmacGet": {
+    "requestUri": "/pay/api/onboarding/applications/AO1?actorMode=service_provider",
+    "signature": "403ac7b12829b75d436d2cf8659b4cd25d5aae29a766dc7d4e808149fa1b5cf1"
+  },
+  "callback": {
+    "secret": "onboarding_secret_xxx",
+    "timestamp": "1790800000",
+    "nonce": "n0nce12345",
+    "event": "onboarding.application.activated",
+    "body": "{\"eventId\":\"onb_evt_1\",\"event\":\"onboarding.application.activated\",\"applicationNo\":\"AO202605260001\",\"status\":\"approved\",\"activationStatus\":\"activated\",\"merchantCode\":\"M2951782756852\"}",
+    "bodySha256": "f46774b7ed929ab079b83b347ab31e92b98a1d002a47e7e9e9d9011b5e19fc29",
+    "signature": "a8df0ab67e1da8cbf4f6fe696638b48aec4685dd1ad46efa1e84b5f3a35e2fa1"
+  }
+}
