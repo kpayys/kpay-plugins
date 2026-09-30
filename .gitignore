@@ -2,3 +2,4 @@ dist/
 runtime.log
 .idea/
 .vscode/
+__pycache__/

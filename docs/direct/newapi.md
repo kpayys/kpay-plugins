@@ -1,6 +1,6 @@
 # NewAPI × KPay
 
-NewAPI 自带易支付充值，直接填 KPay 的参数就能用，不用装插件。
+NewAPI 自带易支付充值，直接填 KPay 的参数就能用，不用装插件。基于 NewAPI 的分支（如 Veloera）界面基本一致，按同样方法填写。
 
 ## 开始前
 

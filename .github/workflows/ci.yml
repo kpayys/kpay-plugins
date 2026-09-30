@@ -20,10 +20,39 @@ jobs:
           coverage: none
       - name: 语法检查
         run: |
-          # 超级支付要求 PHP 8.2，低版本只检查其余插件
-          if php -r 'exit(PHP_VERSION_ID >= 80000 ? 0 : 1);'; then skip=''; else skip='./superpay/*'; fi
-          find . -name '*.php' -not -path './.git/*' ${skip:+-not -path "$skip"} -print0 | xargs -0 -n1 php -l
+          # 超级支付、Paymenter 要求 PHP 8，低版本只检查其余插件
+          if php -r 'exit(PHP_VERSION_ID >= 80000 ? 0 : 1);'; then
+            find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+          else
+            find . -name '*.php' -not -path './.git/*' -not -path './superpay/*' -not -path './paymenter/*' -not -path './tests/paymenter_test.php' -print0 | xargs -0 -n1 php -l
+          fi
       - name: 测试
         run: php tests/run.php
       - name: 打包
         run: bash scripts/package.sh
+
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Python SDK
+        working-directory: sdk/python
+        run: python -m unittest -v
+      - name: Node.js SDK
+        working-directory: sdk/node
+        run: node --test kpay.test.mjs
+      - name: Go SDK
+        working-directory: sdk/go
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...

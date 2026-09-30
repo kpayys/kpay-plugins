@@ -44,10 +44,13 @@ require __DIR__ . '/epay_test.php';
 require __DIR__ . '/whmcs_test.php';
 require __DIR__ . '/woocommerce_test.php';
 require __DIR__ . '/zjmf_test.php';
+require __DIR__ . '/shopxo_test.php';
+require __DIR__ . '/sdk_php_test.php';
 if (PHP_VERSION_ID >= 80000) {
 	require __DIR__ . '/superpay_test.php';
+	require __DIR__ . '/paymenter_test.php';
 } else {
-	echo "超级支付插件需要 PHP 8，跳过\n";
+	echo "超级支付、Paymenter 需要 PHP 8，跳过\n";
 }
 
 echo "{$GLOBALS['__passes']} passed, {$GLOBALS['__failures']} failed\n";

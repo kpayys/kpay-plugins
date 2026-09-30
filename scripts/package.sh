@@ -25,5 +25,14 @@ mkdir -p "$dist"
 # 智简魔方 V10：解压到网站根目录，得到 public/plugins/gateway/kpay/
 (cd "$root/zjmf" && zip -qr "$dist/kpay-zjmf.zip" public)
 
+# ShopXO：解压到网站根目录，得到 extend/payment/Kpay.php
+(cd "$root/shopxo" && zip -qr "$dist/kpay-shopxo.zip" extend)
+
+# Paymenter：解压到 Paymenter 根目录，得到 extensions/Gateways/Kpay/
+(cd "$root/paymenter" && zip -qr "$dist/kpay-paymenter.zip" extensions)
+
+# SDK：PHP / Python / Node.js / Go 各一份源码
+(cd "$root" && zip -qr "$dist/kpay-sdk.zip" sdk -x '*/__pycache__/*')
+
 (cd "$dist" && sha256sum ./*.zip > SHA256SUMS)
 ls -l "$dist"
