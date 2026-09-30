@@ -22,7 +22,7 @@ return [
         'title' => '商户密钥',
         'name' => 'key',
         'type' => 'password',
-        'placeholder' => 'KPay 后台「EPay 配置」里的密钥',
+        'placeholder' => 'KPay「API 密钥」页创建 EPay 兼容密钥时显示的 EPay Key',
         'required' => true,
     ],
     [

@@ -26,8 +26,7 @@ class Pay extends Base implements \App\Pay\Pay
 
         $gateway = self::gateway((string)($this->config['url'] ?? ''));
 
-        // 只能传 KPay 认识的字段：clientip、param 这类扩展字段 KPay 不参与验签，
-        // 带上会导致签名对不上。
+        // 只传 KPay 用得上的字段；KPay 不会回传 param，也用不到 clientip。
         $params = [
             'pid' => $pid,
             'out_trade_no' => $this->tradeNo,

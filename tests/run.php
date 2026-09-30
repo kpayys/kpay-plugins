@@ -41,6 +41,9 @@ define('VECTOR_CASES', $vectors['cases']);
 
 require __DIR__ . '/acg_test.php';
 require __DIR__ . '/epay_test.php';
+require __DIR__ . '/whmcs_test.php';
+require __DIR__ . '/woocommerce_test.php';
+require __DIR__ . '/zjmf_test.php';
 if (PHP_VERSION_ID >= 80000) {
 	require __DIR__ . '/superpay_test.php';
 } else {

@@ -11,6 +11,7 @@ require_once __DIR__ . '/KpayClient.php';
 class KpayService
 {
 	const SETTING_KEY = 'kpay_sp';
+	const DOMAIN_VERIFY_FILE = 'kpay-domain-verification.txt';
 	const DB_VERSION = '1';
 
 	// 商户可以填写的资料字段，保存进件单时只会写入这些字段
@@ -476,6 +477,43 @@ class KpayService
 		}
 		$DB->update('kpay_apply', ['bind_pid' => $pid, 'bound_at' => 'NOW()'], ['id' => $row['id']]);
 		return $count;
+	}
+
+	/**
+	 * 下级商户的 EPay 密钥要把本站域名设为授权域名，并通过域名归属验证。
+	 * 验证文件每一行都算数，所以多个商户的验证码可以追加在同一个文件里。
+	 *
+	 * @return bool 新写入返回 true，已存在返回 false
+	 */
+	public function addDomainVerification($line, $root = null)
+	{
+		$line = self::normalizeVerificationLine($line);
+		$root = $root !== null ? $root : (defined('ROOT') ? ROOT : '');
+		if ($root === '') {
+			throw new Exception('无法确定网站根目录');
+		}
+		$path = rtrim($root, '/\\') . '/' . self::DOMAIN_VERIFY_FILE;
+		$lines = [];
+		if (is_file($path)) {
+			$lines = array_values(array_filter(array_map('trim', file($path, FILE_IGNORE_NEW_LINES)), 'strlen'));
+		}
+		if (in_array($line, $lines, true)) {
+			return false;
+		}
+		$lines[] = $line;
+		if (@file_put_contents($path, implode("\n", $lines) . "\n", LOCK_EX) === false) {
+			throw new Exception('写入验证文件失败，请检查网站根目录是否可写，或手动把这一行加到 ' . self::DOMAIN_VERIFY_FILE);
+		}
+		return true;
+	}
+
+	public static function normalizeVerificationLine($line)
+	{
+		$line = trim((string)$line);
+		if (!preg_match('/^kpay-domain-verification=[A-Za-z0-9_-]{16,64}$/D', $line)) {
+			throw new Exception('验证码格式不对，应为 kpay-domain-verification= 开头的一整行');
+		}
+		return $line;
 	}
 
 	// ─── 服务商查询 ─────────────────────────────────────────────────

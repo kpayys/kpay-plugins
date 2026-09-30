@@ -27,7 +27,7 @@
 | `sign` | 是 | 签名 |
 | `sign_type` | 否 | 固定 `MD5` |
 
-**只传上表里的参数。** `clientip`、`param` 等其他易支付实现里常见的扩展参数不参与 KPay 的验签，带上会签名失败。
+其他易支付实现里常见的 `clientip`、`sitename`、`cid`、`param` 等扩展参数可以照常带上，只要它们参与了签名，KPay 会一并验签；但 KPay 不使用这些参数，异步通知里也不会回传 `param`。
 
 `mapi` 返回 JSON：`code` 为 `1` 表示成功，`payurl` 是付款页地址，直接跳转即可；失败时看 `msg`。
 
@@ -72,7 +72,7 @@ function kpay_sign(array $params, string $key): string
 
 ## 退款（可选）
 
-EPay 协议本身没有退款。需要程序化退款时，用 KPay「API 密钥」创建一把带 **订单退款** 权限的 Key，调用：
+EPay 协议本身没有退款。需要程序化退款时，用 KPay「API 密钥」创建一把「平台 API」密钥并勾选 **发起退款** 权限，调用：
 
 ```
 POST https://api.kaipay.cn/pay/api/order/refund

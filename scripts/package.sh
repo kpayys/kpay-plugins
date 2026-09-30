@@ -16,5 +16,14 @@ mkdir -p "$dist"
 # 超级支付：解压到网站根目录，得到 php/app/payApi/controller/Kpay.php
 (cd "$root/superpay" && zip -qr "$dist/kpay-superpay.zip" php)
 
+# WHMCS：解压到 WHMCS 根目录，得到 modules/gateways/kpay.php 等
+(cd "$root/whmcs" && zip -qr "$dist/kpay-whmcs.zip" modules)
+
+# WooCommerce：标准 WordPress 插件包，可在后台「上传插件」直接安装
+(cd "$root/woocommerce" && zip -qr "$dist/kpay-for-woocommerce.zip" kpay-for-woocommerce)
+
+# 智简魔方 V10：解压到网站根目录，得到 public/plugins/gateway/kpay/
+(cd "$root/zjmf" && zip -qr "$dist/kpay-zjmf.zip" public)
+
 (cd "$dist" && sha256sum ./*.zip > SHA256SUMS)
 ls -l "$dist"

@@ -4,6 +4,17 @@
  * 进件表单：kpay_render_apply_form() 输出 HTML，kpay_render_apply_script() 输出脚本
  * （商户中心的 jQuery 在页脚加载，所以脚本要放在页脚之后输出）
  */
+/**
+ * 接收 KPay 通知的站点域名（下级商户的 EPay 密钥要把它设为授权域名）
+ */
+function kpay_site_host()
+{
+	global $siteurl, $conf;
+	$base = !empty($conf['localurl']) ? $conf['localurl'] : (isset($siteurl) ? $siteurl : '');
+	$host = $base ? parse_url($base, PHP_URL_HOST) : '';
+	return $host ? $host : (isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '');
+}
+
 function kpay_render_apply_form()
 {
 	?>
@@ -27,7 +38,16 @@ function kpay_render_apply_form()
 	<div class="panel panel-default" id="kpay-bind-panel" style="display:none">
 		<div class="panel-heading font-bold">绑定收款账户</div>
 		<div class="panel-body">
-			<p class="text-muted">审核通过后，登录 KPay 商户后台「EPay 配置」页面，把商户ID和密钥填到这里即可开始收款。</p>
+			<ol class="text-muted" style="padding-left:18px">
+				<li>登录 KPay，打开平台发给你的开通链接，完成开通。</li>
+				<li>在 KPay「API 密钥」页创建「EPay 兼容 API」密钥，授权域名填 <code><?php echo htmlspecialchars(kpay_site_host(), ENT_QUOTES, 'UTF-8'); ?></code>，保存后复制页面上只显示一次的 EPay Key。</li>
+				<li>KPay 会给出一行 <code>kpay-domain-verification=</code> 开头的验证码，粘贴到下面点「写入」，再回 KPay 点验证，等状态变成已通过。</li>
+				<li>填入商户ID（KPay「EPay 接入 → EPay 配置」）和 EPay Key，点「绑定」。</li>
+			</ol>
+			<div class="input-group" style="margin-bottom:10px">
+				<input type="text" class="form-control" id="kpay-verify-line" placeholder="kpay-domain-verification=..."/>
+				<span class="input-group-btn"><button type="button" class="btn btn-default" data-kpay-act="verify_domain">写入</button></span>
+			</div>
 			<div class="form-inline">
 				<input type="text" class="form-control" id="kpay-bind-pid" placeholder="商户ID"/>
 				<input type="password" class="form-control" id="kpay-bind-key" placeholder="密钥" autocomplete="new-password"/>
@@ -268,6 +288,8 @@ function kpay_render_apply_script($ajaxUrl, $csrf, $uid, $actPrefix = '')
 			request('save', payload, function (data) { state.startNew = false; render(data); });
 		} else if (act === 'bank') {
 			request('bank', formData(), render);
+		} else if (act === 'verify_domain') {
+			request('verify_domain', { line: $('#kpay-verify-line').val() }, function (data) { $('#kpay-verify-line').val(''); render(data); });
 		} else if (act === 'bind') {
 			request('bind', { pid: $('#kpay-bind-pid').val(), key: $('#kpay-bind-key').val() }, render);
 		} else if (act === 'submit') {

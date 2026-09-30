@@ -76,6 +76,17 @@ function kpay_apply_action(KpayService $service, $act, $uid, $isAdmin)
 			$city = isset($_POST['cityCode']) ? preg_replace('/\D/', '', $_POST['cityCode']) : '';
 			return ['code' => 0, 'data' => $service->regions($province, $city)];
 
+		case 'verify_domain':
+			$current = $requireRow();
+			if (!$isAdmin && !$service->setting('user_bind')) {
+				throw new Exception('请联系平台完成收款账户绑定');
+			}
+			if (!$isAdmin && !in_array($current['status'], ['approved', 'partial_approved', 'partially_approved'], true)) {
+				throw new Exception('进件审核通过后才能操作');
+			}
+			$added = $service->addDomainVerification(isset($_POST['line']) ? $_POST['line'] : '');
+			return kpay_apply_detail($service, $current, $isAdmin, $added ? '已写入验证文件，回到 KPay 点验证即可' : '这行验证码已经在验证文件里了');
+
 		case 'bind':
 			$current = $requireRow();
 			if (!$isAdmin && !$service->setting('user_bind')) {

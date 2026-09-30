@@ -289,6 +289,20 @@ check(FakeKpayClient::last()['uri'] === '/pay/api/service-provider/merchants?pag
 check(throws(function () use ($service) { $service->serviceProvider('../admin', []); }) === '不支持的查询', 'flow: 服务商查询资源白名单');
 check(throws(function () use ($service) { $service->submitRateChange(['bindingId' => 1, 'provider' => 'fuyou', 'payMethod' => 'union', 'targetFeeRate' => 0.003, 'reason' => 'x']); }) === '请完整填写费率调整信息', 'flow: 费率调整参数校验');
 
+// 域名验证码写入
+$tmpRoot = sys_get_temp_dir() . '/kpay-verify-' . bin2hex(random_bytes(4));
+mkdir($tmpRoot);
+$lineA = 'kpay-domain-verification=AbCdEfGhIjKlMnOpQrStUvWx';
+$lineB = 'kpay-domain-verification=ZyXwVuTsRqPoNmLkJiHg-_12';
+check($service->addDomainVerification(' ' . $lineA . ' ', $tmpRoot) === true, 'verify: 写入第一行验证码');
+check($service->addDomainVerification($lineB, $tmpRoot) === true, 'verify: 追加第二个商户的验证码');
+check($service->addDomainVerification($lineA, $tmpRoot) === false, 'verify: 重复的验证码不再写入');
+check(file_get_contents($tmpRoot . '/kpay-domain-verification.txt') === $lineA . "\n" . $lineB . "\n", 'verify: 文件每行一个验证码');
+check(throws(function () use ($service, $tmpRoot) { $service->addDomainVerification("kpay-domain-verification=abc\n<?php", $tmpRoot); }) !== false, 'verify: 拒绝格式不对的内容');
+check(throws(function () use ($service, $tmpRoot) { $service->addDomainVerification('<script>alert(1)</script>', $tmpRoot); }) !== false, 'verify: 拒绝任意内容');
+unlink($tmpRoot . '/kpay-domain-verification.txt');
+rmdir($tmpRoot);
+
 // 商户端动作：不同状态下的权限
 check(throws(function () use ($service) { kpay_apply_action($service, 'submit', 9, false); }) === '请先填写并保存资料', 'ajax: 没有进件单时不能提交');
 check(kpay_apply_action($service, 'detail', 9, false)['data']['apply'] === null, 'ajax: 没有进件单时详情为空');

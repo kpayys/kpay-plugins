@@ -110,7 +110,7 @@ $mod = isset($_GET['mod']) ? $_GET['mod'] : '';
 		<form class="form-horizontal" id="settings-form" onsubmit="return false">
 			<div class="form-group"><label class="col-sm-2 control-label">接口地址</label><div class="col-sm-10"><input class="form-control" name="apiurl"/></div></div>
 			<div class="form-group"><label class="col-sm-2 control-label">API Key</label><div class="col-sm-10"><input class="form-control" name="apikey"/>
-				<p class="help-block">在 KPay 服务商工作台「API 密钥」创建，勾选 onboarding:*（进件）和 sp:*（服务商查询、费率调整）权限。</p></div></div>
+				<p class="help-block">用服务商账号在 KPay「API 密钥」页创建「平台 API」密钥，勾选创建进件单、查询进件单、上传进件材料、查询旗下商户、查询分润流水、查询费率调整、提交费率调整、查看旗下商户投诉；授权域名填本站域名并完成验证。</p></div></div>
 			<div class="form-group"><label class="col-sm-2 control-label">API Secret</label><div class="col-sm-10"><input class="form-control" type="password" name="apisecret" autocomplete="new-password" placeholder="留空表示不修改"/></div></div>
 			<div class="form-group"><label class="col-sm-2 control-label"></label><div class="col-sm-10"><button class="btn btn-default" id="test-btn">测试连接并读取可用机构</button></div></div>
 			<div class="form-group"><label class="col-sm-2 control-label">进件机构</label><div class="col-sm-10"><div id="provider-boxes" class="checkbox"></div>
@@ -135,6 +135,10 @@ $mod = isset($_GET['mod']) ? $_GET['mod'] : '';
 	<div class="modal-header"><button type="button" class="close" data-dismiss="modal">&times;</button><h4 class="modal-title">进件详情</h4></div>
 	<div class="modal-body" id="detail-body"></div>
 	<div class="modal-footer">
+		<div class="input-group" style="margin-bottom:8px">
+			<input class="form-control" id="verify-line" placeholder="商户的域名验证码 kpay-domain-verification=..."/>
+			<span class="input-group-btn"><button class="btn btn-default" id="verify-btn">写入验证文件</button></span>
+		</div>
 		<div class="form-inline pull-left">
 			<input class="form-control" id="bind-pid" placeholder="商户ID" style="width:120px"/>
 			<input class="form-control" id="bind-key" type="password" placeholder="EPay 密钥" autocomplete="new-password" style="width:200px"/>
@@ -329,7 +333,7 @@ $mod = isset($_GET['mod']) ? $_GET['mod'] : '';
 				html += '<tr><td>' + esc(p.label) + '</td><td>' + esc(p.status) + '</td><td>' + esc(p.merchantCode || '-') + '</td><td>' + esc(p.remark || '') + (p.signUrl ? ' <a href="' + esc(p.signUrl) + '" target="_blank" rel="noopener">确认链接</a>' : '') + '</td></tr>';
 			});
 			html += '</tbody></table>';
-			html += '<p class="text-muted">审核通过后，在 KPay 服务商工作台为该进件单生成开通链接发给商户，商户开通后把他的 EPay 商户ID和密钥填到下方完成绑定。' + (a.bind_pid ? '当前已绑定：' + esc(a.bind_pid) : '') + '</p>';
+			html += '<p class="text-muted">审核通过后：① 在 KPay「进件与代理 → 聚合进件工作台」打开这张进件单，生成完成开通链接（目标用户ID填商户的 KPay 用户ID）发给商户；② 商户开通后创建 EPay 兼容密钥，授权域名填本站域名，把 KPay 给的验证码写入下方；③ 填入商户ID和 EPay Key 完成绑定。' + (a.bind_pid ? '当前已绑定：' + esc(a.bind_pid) : '') + '</p>';
 			$('#detail-body').html(html);
 			$('#detail-submit').toggle(!!m.canSubmit);
 			$('#detail-modal').modal('show');
@@ -340,6 +344,10 @@ $mod = isset($_GET['mod']) ? $_GET['mod'] : '';
 	$('#detail-submit').on('click', function () {
 		if (!currentApply || !confirm('确认提交审核？')) return;
 		post('apply_submit', { uid: currentApply.uid }, function () { showDetail(currentApply.id, false); loaders.apply(); });
+	});
+	$('#verify-btn').on('click', function () {
+		if (!currentApply) return;
+		post('apply_verify_domain', { uid: currentApply.uid, line: $('#verify-line').val() }, function () { $('#verify-line').val(''); });
 	});
 	$('#bind-btn').on('click', function () {
 		if (!currentApply) return;

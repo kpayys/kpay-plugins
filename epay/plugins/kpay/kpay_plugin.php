@@ -33,7 +33,7 @@ class kpay_plugin
 			'appkey' => [
 				'name' => '商户密钥',
 				'type' => 'input',
-				'note' => 'KPay 后台「EPay 配置」里的密钥；服务商主通道填 [appkey]',
+				'note' => 'KPay「API 密钥」页创建 EPay 兼容密钥时显示的 EPay Key；服务商主通道填 [appkey]',
 			],
 			'appswitch' => [
 				'name' => '下单方式',
@@ -43,7 +43,7 @@ class kpay_plugin
 			'appmchid' => [
 				'name' => '退款 API Key',
 				'type' => 'input',
-				'note' => '选填。KPay「API 密钥」里勾选了订单退款权限的 Key，不填则不支持在易支付后台退款',
+				'note' => '选填。KPay「API 密钥」里创建的平台 API 密钥（勾选「发起退款」权限），不填则不支持在易支付后台退款',
 			],
 			'appsecret' => [
 				'name' => '退款 API Secret',
@@ -52,7 +52,7 @@ class kpay_plugin
 			],
 		],
 		'select'   => null,
-		'note'     => '商户ID和密钥在 KPay 商户后台「EPay 配置」页面查看。服务商给下级商户开子通道时，填下级商户自己的商户ID和密钥。',
+		'note'     => '商户ID在 KPay 商户后台「EPay 接入 → EPay 配置」查看；EPay Key 在「API 密钥」页创建 EPay 兼容密钥时显示。服务商给下级商户开子通道时，填下级商户自己的商户ID和 EPay Key。',
 		'bindwxmp' => false,
 		'bindwxa'  => false,
 	];
@@ -253,7 +253,7 @@ class kpay_plugin
 
 		$notifyBase = !empty($conf['localurl']) ? $conf['localurl'] : $siteurl;
 
-		// 只传 KPay 认识的字段：clientip、param 等扩展字段 KPay 不参与验签，带上会签名失败
+		// 只传 KPay 用得上的字段；KPay 不会回传 param，也用不到 clientip
 		$params = [
 			'pid'          => $pid,
 			'out_trade_no' => TRADE_NO,
