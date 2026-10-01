@@ -31,6 +31,9 @@ mkdir -p "$dist"
 # Paymenter：解压到 Paymenter 根目录，得到 extensions/Gateways/Kpay/
 (cd "$root/paymenter" && zip -qr "$dist/kpay-paymenter.zip" extensions)
 
+# 帝国CMS：解压到网站根目录，得到 e/payapi/kpay/；install.sql 在后台执行
+(cd "$root/empirecms" && zip -qr "$dist/kpay-empirecms.zip" e install.sql)
+
 # SDK：PHP / Python / Node.js / Go 各一份源码
 (cd "$root" && zip -qr "$dist/kpay-sdk.zip" sdk -x '*/__pycache__/*')
 

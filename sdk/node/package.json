@@ -1,0 +1,14 @@
+{
+  "name": "kpay-sdk",
+  "version": "1.0.0",
+  "description": "KPay 凯付 Node.js SDK：易支付兼容下单、通知验签、查单、退款",
+  "type": "module",
+  "main": "kpay.mjs",
+  "exports": "./kpay.mjs",
+  "files": ["kpay.mjs"],
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node --test kpay.test.mjs" },
+  "license": "MIT",
+  "homepage": "https://github.com/kpayys/kpay-plugins/tree/main/sdk",
+  "repository": { "type": "git", "url": "https://github.com/kpayys/kpay-plugins.git", "directory": "sdk/node" }
+}

@@ -24,6 +24,7 @@
 | 智简魔方 V10 | 收银台收款、原路退款 | [安装说明](zjmf/README.md) | `kpay-zjmf.zip` |
 | ShopXO | 商城下单收款、原路退款 | [安装说明](shopxo/README.md) | `kpay-shopxo.zip` |
 | Paymenter | 主机计费账单收款（人民币） | [安装说明](paymenter/README.md) | `kpay-paymenter.zip` |
+| 帝国CMS（UTF-8 版） | 会员充值点数、预付款、会员组、商城订单 | [安装说明](empirecms/README.md) | `kpay-empirecms.zip` |
 
 安装包在 [Releases](../../releases) 下载；也可以克隆本仓库，把对应目录复制到你的网站。
 
@@ -39,6 +40,8 @@
 | 独角数卡（dujiaoka） | [配置说明](docs/direct/dujiaoka.md) |
 | Sub2API | [配置说明](docs/direct/sub2api.md) |
 | SSPanel-UIM | [配置说明](docs/direct/sspanel.md) |
+| 苹果CMS v10（MacCMS） | [配置说明](docs/direct/maccms.md) |
+| CoAI（原 ChatNio） | [配置说明](docs/direct/coai.md) |
 | 其他支持易支付的系统（子比主题、B2、RiPro、彩虹云商城等） | [通用填法](docs/direct/generic.md) |
 
 ### 自己开发的系统：用 SDK
@@ -71,6 +74,7 @@ PHP、Python、Node.js、Go 各一份单文件 SDK，无第三方依赖：生成
   zjmf/          智简魔方 V10 插件
   shopxo/        ShopXO 支付插件
   paymenter/     Paymenter 网关扩展
+  empirecms/     帝国CMS 在线支付接口
   sdk/           PHP / Python / Node.js / Go SDK
   docs/          KPay 准备、直连指南、常见问题、协议速查
   tests/         无依赖测试

@@ -46,6 +46,7 @@ require __DIR__ . '/woocommerce_test.php';
 require __DIR__ . '/zjmf_test.php';
 require __DIR__ . '/shopxo_test.php';
 require __DIR__ . '/sdk_php_test.php';
+require __DIR__ . '/empirecms_test.php';
 if (PHP_VERSION_ID >= 80000) {
 	require __DIR__ . '/superpay_test.php';
 	require __DIR__ . '/paymenter_test.php';

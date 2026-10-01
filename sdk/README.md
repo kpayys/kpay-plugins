@@ -9,6 +9,15 @@
 | Node.js | [`node/kpay.mjs`](node/kpay.mjs) | Node 18+ |
 | Go | [`go/kpay.go`](go/kpay.go) | Go 1.21+，`go get github.com/kpayys/kpay-plugins/sdk/go` |
 
+## 安装
+
+| 语言 | 方式 |
+|---|---|
+| PHP | 把 `php/KPay.php` 复制到项目里，`require` 即可 |
+| Python | `pip install "git+https://github.com/kpayys/kpay-plugins.git#subdirectory=sdk/python"`，或直接复制 `kpay.py` |
+| Node.js | 把 `node/kpay.mjs` 复制到项目里 `import` |
+| Go | `go get github.com/kpayys/kpay-plugins/sdk/go` |
+
 ## 开始前
 
 按 [KPay 准备](../docs/kpay-setup.md) 拿到商户ID和 EPay Key，并把你网站的域名加进授权域名、完成验证。

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kpay-sdk"
+version = "1.0.0"
+description = "KPay 凯付 Python SDK：易支付兼容下单、通知验签、查单、退款"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "KPay" }]
+urls = { Homepage = "https://github.com/kpayys/kpay-plugins/tree/main/sdk" }
+
+[tool.setuptools]
+py-modules = ["kpay"]
