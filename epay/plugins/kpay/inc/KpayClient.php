@@ -122,8 +122,35 @@ class KpayClient
 	 * @param string $path   如 /pay/api/onboarding/options
 	 * @param array  $query  URL 查询参数
 	 * @param array|null $body JSON 请求体
+	 * @param array $extraHeaders 附加请求头，如代商户收款的 X-KPay-Sub-Merchant（不参与签名）
 	 */
-	public function api($method, $path, array $query = [], $body = null)
+	public function api($method, $path, array $query = [], $body = null, array $extraHeaders = [])
+	{
+		$response = $this->request($method, $path, $query, $body, $extraHeaders);
+		return self::unwrap(self::decode($response['body']));
+	}
+
+	/**
+	 * 返回原始响应的开放接口，用于下载对账单这类文件。KPay 出错时仍返回 JSON，转成异常
+	 */
+	public function apiRaw($method, $path, array $query = [])
+	{
+		$response = $this->request($method, $path, $query, null, []);
+		$body = (string)$response['body'];
+		$trimmed = ltrim($body, "\xEF\xBB\xBF \r\n\t");
+		if ($trimmed !== '' && $trimmed[0] === '{') {
+			$result = json_decode($trimmed, true);
+			if (is_array($result) && isset($result['code'])) {
+				self::unwrap($result);
+			}
+		}
+		if ($response['status'] >= 400) {
+			throw new Exception('KPay 接口调用失败（HTTP ' . $response['status'] . '）');
+		}
+		return $body;
+	}
+
+	private function request($method, $path, array $query, $body, array $extraHeaders)
 	{
 		$method = strtoupper($method);
 		$requestUri = '/' . ltrim($path, '/');
@@ -136,9 +163,37 @@ class KpayClient
 			$raw = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 			$headers[] = 'Content-Type: application/json';
 		}
+		foreach ($extraHeaders as $header) {
+			$headers[] = str_replace(["\r", "\n"], '', (string)$header);
+		}
 		$headers = array_merge($headers, $this->signHeaders($method, $requestUri, $raw));
-		$response = $this->send($method, rtrim($this->gateway, '/') . $requestUri, $body !== null ? $raw : null, $headers);
-		return self::unwrap(self::decode($response['body']));
+		return $this->send($method, rtrim($this->gateway, '/') . $requestUri, $body !== null ? $raw : null, $headers);
+	}
+
+	// ─── 收银台地址 ─────────────────────────────────────────────────
+
+	/**
+	 * V3 托管收银台返回的是 /checkout/xxx 这样的相对路径，收银台和 API 不在同一个域名：
+	 * api.kaipay.cn → pay.kaipay.cn、hk-api.kaipay.cn → hk-pay.kaipay.cn，其他地址原样使用
+	 */
+	public static function checkoutUrl($gateway, $path)
+	{
+		$path = trim((string)$path);
+		if (preg_match('#^https://#i', $path)) {
+			return $path;
+		}
+		if ($path === '' || $path[0] !== '/' || strpos($path, '//') === 0) {
+			return '';
+		}
+		$parts = parse_url(self::normalizeGateway($gateway));
+		$host = strtolower($parts['host']);
+		if (strpos($host, 'api.') === 0) {
+			$host = 'pay.' . substr($host, 4);
+		} elseif (preg_match('/^([a-z0-9-]+)-api\.(.+)$/', $host, $m)) {
+			$host = $m[1] . '-pay.' . $m[2];
+		}
+		$port = isset($parts['port']) ? ':' . $parts['port'] : '';
+		return $parts['scheme'] . '://' . $host . $port . $path;
 	}
 
 	/**
@@ -234,6 +289,14 @@ class KpayClient
 		}
 		$expected = hash_hmac('sha256', implode("\n", [$timestamp, $nonce, $event, $bodyHash]), $secret);
 		return hash_equals($expected, $signature);
+	}
+
+	// 测试时用来替换 php://input
+	public static $inputOverride = null;
+
+	public static function requestBody()
+	{
+		return self::$inputOverride !== null ? self::$inputOverride : (string)file_get_contents('php://input');
 	}
 
 	/**

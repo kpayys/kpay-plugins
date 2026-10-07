@@ -10,6 +10,7 @@
  * 目录名必须是 kpay，放到易支付根目录 plugins/ 下。
  */
 require_once __DIR__ . '/inc/KpayClient.php';
+require_once __DIR__ . '/inc/KpayService.php';
 
 class kpay_plugin
 {
@@ -52,7 +53,7 @@ class kpay_plugin
 			],
 		],
 		'select'   => null,
-		'note'     => '商户ID在 KPay 商户后台「EPay 接入 → EPay 配置」查看；EPay Key 在「API 密钥」页创建 EPay 兼容密钥时显示。服务商给下级商户开子通道时，填下级商户自己的商户ID和 EPay Key。',
+		'note'     => '商户ID在 KPay 商户后台「EPay 接入 → EPay 配置」查看；EPay Key 在「API 密钥」页创建 EPay 兼容密钥时显示。服务商模式下子通道由 /admin/kpay.php 自动生成，不用手填。',
 		'bindwxmp' => false,
 		'bindwxa'  => false,
 	];
@@ -63,6 +64,10 @@ class kpay_plugin
 
 		if (!empty($channel['appswitch'])) {
 			return ['type' => 'jump', 'url' => $siteurl . 'pay/' . $order['typename'] . '/' . TRADE_NO . '/'];
+		}
+		// 服务商代收只能服务端下单，拿到收银台地址后跳转
+		if (self::_delegatedBindingId() > 0) {
+			return self::_payPage(self::_payType($order['typename']), '');
 		}
 
 		try {
@@ -106,6 +111,10 @@ class kpay_plugin
 	{
 		global $channel, $order;
 
+		if (($bindingId = self::_delegatedBindingId()) > 0) {
+			return self::_delegatedNotify($bindingId);
+		}
+
 		$data = $_GET;
 		if (!KpayClient::epayVerify($data, $channel['appid'], $channel['appkey'])) {
 			return ['type' => 'html', 'data' => 'fail'];
@@ -124,6 +133,10 @@ class kpay_plugin
 	static public function return()
 	{
 		global $channel, $order;
+
+		if (($bindingId = self::_delegatedBindingId()) > 0) {
+			return self::_delegatedReturn($bindingId);
+		}
 
 		$data = $_GET;
 		if (!KpayClient::epayVerify($data, $channel['appid'], $channel['appkey'])) {
@@ -145,17 +158,33 @@ class kpay_plugin
 		if (empty($order)) {
 			exit();
 		}
-
-		$apiKey = isset($channel['appmchid']) ? trim((string)$channel['appmchid']) : '';
-		$apiSecret = isset($channel['appsecret']) ? trim((string)$channel['appsecret']) : '';
-		if ($apiKey === '' || $apiSecret === '') {
-			return ['code' => -1, 'msg' => '该通道未配置退款 API Key，请到 KPay 商户后台操作退款'];
-		}
 		if (empty($order['api_trade_no'])) {
 			return ['code' => -1, 'msg' => '缺少 KPay 平台订单号，无法退款'];
 		}
-
 		$refundNo = !empty($order['refund_no']) ? $order['refund_no'] : 'R' . $order['trade_no'];
+		$refundNo = substr(preg_replace('/[^A-Za-z0-9_-]/', '', (string)$refundNo), 0, 50);
+
+		// 服务商代收的订单用服务商密钥、以商户身份退款
+		if (($bindingId = self::_delegatedBindingId()) > 0) {
+			try {
+				KpayService::instance()->client()->api('POST', '/pay/api/v3/order/refund', [], [
+					'orderNo'         => (string)$order['api_trade_no'],
+					'refundAmount'    => round((float)$order['refundmoney'], 2),
+					'refundRequestNo' => $refundNo,
+					'reason'          => '易支付后台退款',
+				], [KpayService::subMerchantHeader($bindingId)]);
+			} catch (Exception $e) {
+				return ['code' => -1, 'msg' => $e->getMessage()];
+			}
+			return ['code' => 0];
+		}
+
+		$apiKey = self::_configValue('appmchid');
+		$apiSecret = self::_configValue('appsecret');
+		if ($apiKey === '' || $apiSecret === '') {
+			return ['code' => -1, 'msg' => '该通道未配置退款 API Key，请到 KPay 商户后台操作退款'];
+		}
+
 		try {
 			$client = new KpayClient(isset($channel['appurl']) ? $channel['appurl'] : '', $apiKey, $apiSecret);
 			$client->api('POST', '/pay/api/order/refund', [], [
@@ -176,8 +205,7 @@ class kpay_plugin
 	 */
 	static public function applynotify()
 	{
-		$raw = file_get_contents('php://input');
-		require_once __DIR__ . '/inc/KpayService.php';
+		$raw = KpayClient::requestBody();
 
 		$service = KpayService::instance();
 		if (!KpayClient::verifyCallback($service->setting('callback_secret'), KpayClient::requestHeaders(), $raw)) {
@@ -188,6 +216,30 @@ class kpay_plugin
 			return ['type' => 'html', 'data' => 'bad payload'];
 		}
 		$service->applyCallback($payload);
+		return ['type' => 'html', 'data' => 'success'];
+	}
+
+	/**
+	 * 服务商事件推送：https://你的易支付/pay/spnotify/<KPay 通道ID>/
+	 * 在 admin/kpay.php 设置页开启，处理进件状态和商户授权变化。
+	 */
+	static public function spnotify()
+	{
+		$raw = KpayClient::requestBody();
+
+		$service = KpayService::instance();
+		$secret = (string)$service->setting('webhook_secret');
+		if ($secret === '' || !KpayClient::verifyCallback($secret, KpayClient::requestHeaders(), $raw)) {
+			// 4xx 会让 KPay 停止重试，验签失败多半是密钥已重置，没必要再推
+			@http_response_code(401);
+			return ['type' => 'html', 'data' => 'sign error'];
+		}
+		$event = json_decode($raw, true);
+		if (!is_array($event)) {
+			@http_response_code(400);
+			return ['type' => 'html', 'data' => 'bad payload'];
+		}
+		$service->handleEvent($event);
 		return ['type' => 'html', 'data' => 'success'];
 	}
 
@@ -219,7 +271,11 @@ class kpay_plugin
 	 */
 	static private function _createOrder($type)
 	{
-		$create = function () use ($type) {
+		$bindingId = self::_delegatedBindingId();
+		$create = function () use ($type, $bindingId) {
+			if ($bindingId > 0) {
+				return self::_createDelegatedOrder($bindingId);
+			}
 			$params = self::_orderParams($type);
 			$result = self::_client()->epayPost('epay/mapi', $params);
 
@@ -239,6 +295,113 @@ class kpay_plugin
 			return \lib\Payment::lockPayData(TRADE_NO, $create);
 		}
 		return $create();
+	}
+
+	/**
+	 * 服务商代收：用服务商的平台 API 密钥调 V3 下单，X-KPay-Sub-Merchant 指定收款商户，
+	 * 款项由机构直接结算给商户。付款人在 KPay 收银台选择支付方式。
+	 */
+	static private function _createDelegatedOrder($bindingId)
+	{
+		global $DB, $siteurl, $order, $ordername, $conf;
+
+		$service = KpayService::instance();
+		$notifyBase = !empty($conf['localurl']) ? $conf['localurl'] : $siteurl;
+		$name = !empty($ordername) ? $ordername : $order['name'];
+		$name = trim(str_replace(["\r", "\n", "\0"], ' ', (string)$name));
+		$data = $service->client()->api('POST', '/pay/api/v3/order/create', [], [
+			'merchantOrderNo' => (string)TRADE_NO,
+			'amount'          => round((float)$order['realmoney'], 2),
+			'productName'     => $name !== '' ? mb_strcut($name, 0, 255, 'UTF-8') : '订单' . TRADE_NO,
+			'paymentMode'     => 'checkout',
+			'notifyUrl'       => $notifyBase . 'pay/notify/' . TRADE_NO . '/',
+			'returnUrl'       => $siteurl . 'pay/return/' . TRADE_NO . '/',
+		], [KpayService::subMerchantHeader($bindingId)]);
+
+		$path = '';
+		if (!empty($data['checkoutUrl'])) {
+			$path = $data['checkoutUrl'];
+		} elseif (!empty($data['nextAction']['checkoutUrl'])) {
+			$path = $data['nextAction']['checkoutUrl'];
+		}
+		$url = KpayClient::checkoutUrl($service->setting('apiurl'), $path);
+		if ($url === '') {
+			throw new Exception(!empty($data['warning']) ? $data['warning'] : 'KPay 收银台暂不可用，请稍后重试');
+		}
+		// 记下 KPay 订单号，回跳和退款要用；入账时易支付会再写一次同样的值
+		if (!empty($data['orderNo']) && isset($DB)) {
+			$DB->exec("UPDATE pre_order SET api_trade_no=:no WHERE trade_no=:t", [':no' => (string)$data['orderNo'], ':t' => (string)TRADE_NO]);
+		}
+		return ['jump', $url];
+	}
+
+	/**
+	 * V3 支付通知：JSON 请求体，用服务商密钥的 Secret 做 HMAC 签名
+	 */
+	static private function _delegatedNotify($bindingId)
+	{
+		global $order;
+
+		$raw = KpayClient::requestBody();
+		$secret = (string)KpayService::instance()->setting('apisecret');
+		if ($secret === '' || !KpayClient::verifyCallback($secret, KpayClient::requestHeaders(), $raw)) {
+			return ['type' => 'html', 'data' => 'fail'];
+		}
+		$data = json_decode($raw, true);
+		if (!is_array($data) || !isset($data['orderNo'], $data['merchantOrderNo'], $data['amount'], $data['status'])) {
+			return ['type' => 'html', 'data' => 'fail'];
+		}
+		if ((string)$data['merchantOrderNo'] !== (string)TRADE_NO || round((float)$data['amount'], 2) != round((float)$order['realmoney'], 2)) {
+			return ['type' => 'html', 'data' => 'fail'];
+		}
+		// 退款、关单等其他状态的通知只确认收到
+		if ($data['status'] === 'paid') {
+			processNotify($order, (string)$data['orderNo']);
+		}
+		return ['type' => 'html', 'data' => 'success'];
+	}
+
+	/**
+	 * V3 的回跳不带签名参数：已入账直接回商户；还没收到通知就向 KPay 查一次
+	 */
+	static private function _delegatedReturn($bindingId)
+	{
+		global $order;
+
+		$orderNo = isset($order['api_trade_no']) ? trim((string)$order['api_trade_no']) : '';
+		if (!empty($order['status'])) {
+			processReturn($order, $orderNo);
+			return;
+		}
+		if ($orderNo === '') {
+			return ['type' => 'error', 'msg' => '支付结果确认中，请稍后刷新订单状态'];
+		}
+		try {
+			$data = KpayService::instance()->client()->api('GET', '/pay/api/v3/order/query', ['orderNo' => $orderNo], null, [KpayService::subMerchantHeader($bindingId)]);
+		} catch (Exception $e) {
+			return ['type' => 'error', 'msg' => '支付结果确认中，请稍后刷新订单状态'];
+		}
+		$paid = isset($data['status'], $data['merchantOrderNo'], $data['amount']) && $data['status'] === 'succeeded'
+			&& (string)$data['merchantOrderNo'] === (string)TRADE_NO
+			&& round((float)$data['amount'], 2) == round((float)$order['realmoney'], 2);
+		if (!$paid) {
+			return ['type' => 'error', 'msg' => '订单尚未支付完成'];
+		}
+		processReturn($order, $orderNo);
+	}
+
+	static private function _delegatedBindingId()
+	{
+		global $channel;
+		return KpayService::delegatedBindingId(isset($channel['appid']) ? $channel['appid'] : '');
+	}
+
+	// 通道里没被子通道替换掉的 [xxx] 占位按未填写处理
+	static private function _configValue($name)
+	{
+		global $channel;
+		$value = isset($channel[$name]) ? trim((string)$channel[$name]) : '';
+		return $value !== '' && $value[0] === '[' ? '' : $value;
 	}
 
 	static private function _orderParams($type)

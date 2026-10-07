@@ -26,8 +26,8 @@ function checkmobile()
 
 $epayRoot = dirname(__DIR__) . '/epay';
 require $epayRoot . '/plugins/kpay/kpay_plugin.php';
-require $epayRoot . '/plugins/kpay/inc/KpayService.php';
-require $epayRoot . '/plugins/kpay/inc/KpayAjax.php';
+require_once $epayRoot . '/plugins/kpay/inc/KpayService.php';
+require_once $epayRoot . '/plugins/kpay/inc/KpayAjax.php';
 require __DIR__ . '/fakes.php';
 
 // ─── KpayClient ─────────────────────────────────────────────────────
@@ -314,3 +314,5 @@ $DB->tables['config']['kpay_sp']['v'] = json_encode(array_merge(json_decode($DB-
 $service = new TestKpayService();
 check(throws(function () use ($service) { kpay_apply_action($service, 'bind', 7, false); }) === '请联系平台完成收款账户绑定', 'ajax: 未开放自助绑定时商户不能绑定');
 check(throws(function () use ($service) { kpay_apply_action($service, 'nope', 7, false); }) === '不支持的操作', 'ajax: 未知动作');
+
+require __DIR__ . '/epay_delegate_test.php';

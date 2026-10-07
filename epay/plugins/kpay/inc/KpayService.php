@@ -12,7 +12,23 @@ class KpayService
 {
 	const SETTING_KEY = 'kpay_sp';
 	const DOMAIN_VERIFY_FILE = 'kpay-domain-verification.txt';
-	const DB_VERSION = '1';
+	const DB_VERSION = '2';
+
+	// 代商户收款的子通道：商户ID写成 sp:<渠道商户ID>，下单时改用服务商密钥 + X-KPay-Sub-Merchant
+	const DELEGATE_PREFIX = 'sp:';
+	const DELEGATE_KEY = 'sp';
+
+	// 本站通过事件推送关心的事件
+	const WEBHOOK_EVENTS = ['onboarding.status_changed', 'merchant.authorization_changed'];
+
+	const AUTH_LABELS = [
+		'pending'  => '等待商户同意',
+		'active'   => '已授权',
+		'rejected' => '商户已拒绝',
+		'revoked'  => '授权已撤回',
+		'canceled' => '申请已撤回',
+		'none'     => '未申请',
+	];
 
 	// 商户可以填写的资料字段，保存进件单时只会写入这些字段
 	const FORM_FIELDS = [
@@ -65,6 +81,12 @@ class KpayService
 		return self::$instance;
 	}
 
+	// 测试时替换成带假客户端的实例
+	public static function setInstance($service)
+	{
+		self::$instance = $service;
+	}
+
 	// ─── 设置 ───────────────────────────────────────────────────────
 
 	public function settings()
@@ -92,6 +114,10 @@ class KpayService
 			'user_bind'        => 0,
 			'extra_create'     => '',
 			'callback_secret'  => '',
+			// delegate：服务商代收，商户只需在 KPay 同意授权；epay_key：商户自己建 EPay 密钥并验证本站域名
+			'bind_mode'        => 'delegate',
+			'webhook_url'      => '',
+			'webhook_secret'   => '',
 		];
 	}
 
@@ -119,6 +145,7 @@ class KpayService
 		$next['bind_channels'] = array_values(array_map('intval', self::cleanList(isset($input['bind_channels']) ? $input['bind_channels'] : [], '/^\d+$/')));
 		$next['self_service'] = empty($input['self_service']) ? 0 : 1;
 		$next['user_bind'] = empty($input['user_bind']) ? 0 : 1;
+		$next['bind_mode'] = isset($input['bind_mode']) && $input['bind_mode'] === 'epay_key' ? 'epay_key' : 'delegate';
 
 		$extra = trim((string)(isset($input['extra_create']) ? $input['extra_create'] : ''));
 		if ($extra !== '') {
@@ -183,13 +210,26 @@ class KpayService
 
 	public function callbackUrl()
 	{
+		return $this->channelNotifyUrl('applynotify');
+	}
+
+	/**
+	 * 服务商事件推送的接收地址，和进件回调共用「回调通道」
+	 */
+	public function webhookUrl()
+	{
+		return $this->channelNotifyUrl('spnotify');
+	}
+
+	private function channelNotifyUrl($action)
+	{
 		global $siteurl, $conf;
 		$channelId = (int)$this->setting('callback_channel');
 		if ($channelId <= 0) {
 			return '';
 		}
 		$base = !empty($conf['localurl']) ? $conf['localurl'] : $siteurl;
-		return $base . 'pay/applynotify/' . $channelId . '/';
+		return $base . 'pay/' . $action . '/' . $channelId . '/';
 	}
 
 	// ─── 本地进件单表 ───────────────────────────────────────────────
@@ -199,6 +239,23 @@ class KpayService
 		global $DB;
 		$version = $DB->getColumn("SELECT v FROM pre_config WHERE k='kpay_sp_db' LIMIT 1");
 		if ($version === self::DB_VERSION) {
+			return;
+		}
+		if ($version === '1') {
+			// v1 → v2：代商户收款要记渠道商户ID和授权状态
+			foreach ([
+				"ALTER TABLE `pre_kpay_apply` ADD COLUMN `sp_binding_id` int(11) unsigned DEFAULT NULL",
+				"ALTER TABLE `pre_kpay_apply` ADD COLUMN `auth_status` varchar(20) DEFAULT NULL",
+				"ALTER TABLE `pre_kpay_apply` ADD COLUMN `auth_checked_at` datetime DEFAULT NULL",
+				"ALTER TABLE `pre_kpay_apply` ADD KEY `sp_binding_id` (`sp_binding_id`)",
+			] as $sql) {
+				try {
+					$DB->exec($sql);
+				} catch (Exception $e) {
+					// 列已存在（上次升级做到一半）时忽略
+				}
+			}
+			$DB->exec("REPLACE INTO pre_config SET k='kpay_sp_db', v=:v", [':v' => self::DB_VERSION]);
 			return;
 		}
 		$DB->exec("CREATE TABLE IF NOT EXISTS `pre_kpay_apply` (
@@ -215,12 +272,16 @@ class KpayService
 			`summary` text DEFAULT NULL,
 			`bind_pid` varchar(32) DEFAULT NULL,
 			`bound_at` datetime DEFAULT NULL,
+			`sp_binding_id` int(11) unsigned DEFAULT NULL,
+			`auth_status` varchar(20) DEFAULT NULL,
+			`auth_checked_at` datetime DEFAULT NULL,
 			`addtime` datetime DEFAULT NULL,
 			`updatetime` datetime DEFAULT NULL,
 			PRIMARY KEY (`id`),
 			UNIQUE KEY `external_no` (`external_no`),
 			KEY `uid` (`uid`),
-			KEY `application_no` (`application_no`)
+			KEY `application_no` (`application_no`),
+			KEY `sp_binding_id` (`sp_binding_id`)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 		$DB->exec("REPLACE INTO pre_config SET k='kpay_sp_db', v=:v", [':v' => self::DB_VERSION]);
 	}
@@ -454,20 +515,37 @@ class KpayService
 			throw new Exception('商户ID或密钥不正确');
 		}
 
-		$info = json_encode(['appid' => $pid, 'appkey' => $key]);
+		$count = $this->upsertSubchannels((int)$row['uid'], ['appid' => $pid, 'appkey' => $key], 'KPay ' . $pid, 1);
+		$DB->update('kpay_apply', [
+			'bind_pid' => $pid, 'bound_at' => 'NOW()', 'sp_binding_id' => null, 'auth_status' => null,
+		], ['id' => $row['id']]);
+		return $count;
+	}
+
+	/**
+	 * 给商户在每个绑定通道下生成或更新子通道，返回处理的通道数
+	 */
+	private function upsertSubchannels($uid, array $info, $name, $status)
+	{
+		global $DB;
+		$channels = $this->setting('bind_channels');
+		if (!$channels) {
+			throw new Exception('管理员还没有设置用于绑定的 KPay 通道');
+		}
+		$encoded = json_encode($info);
 		$count = 0;
 		foreach ($channels as $channelId) {
 			$channel = $DB->getRow("SELECT id,plugin FROM pre_channel WHERE id=:id LIMIT 1", [':id' => $channelId]);
 			if (!$channel || $channel['plugin'] !== 'kpay') {
 				continue;
 			}
-			$existing = $DB->getRow("SELECT id FROM pre_subchannel WHERE channel=:c AND uid=:u LIMIT 1", [':c' => $channelId, ':u' => (int)$row['uid']]);
+			$existing = $DB->getRow("SELECT id FROM pre_subchannel WHERE channel=:c AND uid=:u LIMIT 1", [':c' => $channelId, ':u' => (int)$uid]);
 			if ($existing) {
-				$DB->update('subchannel', ['info' => $info, 'status' => 1], ['id' => $existing['id']]);
+				$DB->update('subchannel', ['info' => $encoded, 'status' => $status, 'name' => $name], ['id' => $existing['id']]);
 			} else {
 				$DB->insert('subchannel', [
-					'channel' => $channelId, 'uid' => (int)$row['uid'], 'name' => 'KPay ' . $pid,
-					'status' => 1, 'info' => $info, 'addtime' => 'NOW()',
+					'channel' => $channelId, 'uid' => (int)$uid, 'name' => $name,
+					'status' => $status, 'info' => $encoded, 'addtime' => 'NOW()',
 				]);
 			}
 			$count++;
@@ -475,8 +553,271 @@ class KpayService
 		if ($count === 0) {
 			throw new Exception('没有可用的 KPay 通道');
 		}
-		$DB->update('kpay_apply', ['bind_pid' => $pid, 'bound_at' => 'NOW()'], ['id' => $row['id']]);
 		return $count;
+	}
+
+	// ─── 服务商代收（商户授权后用服务商密钥代下单） ─────────────────
+
+	/**
+	 * 子通道商户ID是 sp:<渠道商户ID> 时返回渠道商户ID，否则返回 0
+	 */
+	public static function delegatedBindingId($appid)
+	{
+		$appid = trim((string)$appid);
+		if (strpos($appid, self::DELEGATE_PREFIX) !== 0) {
+			return 0;
+		}
+		$id = substr($appid, strlen(self::DELEGATE_PREFIX));
+		return ctype_digit($id) && (int)$id > 0 ? (int)$id : 0;
+	}
+
+	public static function subMerchantHeader($bindingId)
+	{
+		return 'X-KPay-Sub-Merchant: ' . (int)$bindingId;
+	}
+
+	public static function authLabel($status)
+	{
+		$labels = self::AUTH_LABELS;
+		return isset($labels[$status]) ? $labels[$status] : (string)$status;
+	}
+
+	/**
+	 * 授权记录里有代收款范围且已生效才算 active，其余原样返回
+	 */
+	public static function paymentAuthStatus($authorization)
+	{
+		if (!is_array($authorization) || empty($authorization['status'])) {
+			return 'none';
+		}
+		$status = (string)$authorization['status'];
+		$scopes = isset($authorization['scopes']) && is_array($authorization['scopes']) ? $authorization['scopes'] : [];
+		if ($status === 'active' && !in_array('payment', $scopes, true)) {
+			return 'none';
+		}
+		return $status;
+	}
+
+	/**
+	 * 进件通过、商户开通后，按平台商户号在旗下商户里找到对应的渠道商户ID
+	 */
+	public function findBindingId($row)
+	{
+		$code = trim((string)$row['merchant_code']);
+		if ($code === '') {
+			return 0;
+		}
+		$data = $this->client()->api('GET', '/pay/api/service-provider/merchants', ['keyword' => $code, 'pageSize' => 20]);
+		foreach (isset($data['list']) ? $data['list'] : [] as $item) {
+			if (isset($item['merchantCode'], $item['id']) && (string)$item['merchantCode'] === $code) {
+				return (int)$item['id'];
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * 服务商代收：确认渠道商户可用，没有授权就向商户发起申请，然后生成子通道。
+	 * 商户同意前子通道是停用的，同意后（事件推送或刷新时）自动启用。
+	 *
+	 * @param int $bindingId 0 表示按平台商户号自动查找
+	 * @return string 授权状态
+	 */
+	public function bindDelegated($row, $bindingId = 0)
+	{
+		global $DB, $conf;
+		$bindingId = (int)$bindingId;
+		if ($bindingId <= 0) {
+			$bindingId = $this->findBindingId($row);
+		}
+		if ($bindingId <= 0) {
+			throw new Exception('还没找到这个商户的 KPay 账户：请确认商户已完成开通；也可以在「旗下商户」查到渠道商户ID后手动填写');
+		}
+		$other = $DB->getRow("SELECT id,uid FROM pre_kpay_apply WHERE sp_binding_id=:b LIMIT 1", [':b' => $bindingId]);
+		if ($other && (int)$other['uid'] !== (int)$row['uid']) {
+			throw new Exception('这个渠道商户已经绑定给 UID ' . (int)$other['uid'] . '，不能重复绑定');
+		}
+
+		$merchant = $this->client()->api('GET', '/pay/api/service-provider/merchants/' . $bindingId);
+		if (empty($merchant['merchantId'])) {
+			throw new Exception('这个商户还没有开通收款，开通后再绑定');
+		}
+		if (isset($merchant['status']) && $merchant['status'] !== 'active') {
+			throw new Exception('这个渠道商户已停用');
+		}
+		$status = self::paymentAuthStatus(isset($merchant['authorization']) ? $merchant['authorization'] : null);
+		if ($status !== 'active' && $status !== 'pending') {
+			$siteName = !empty($conf['sitename']) ? $conf['sitename'] : '本站';
+			$created = $this->client()->api('POST', '/pay/api/service-provider/merchants/' . $bindingId . '/authorization', [], [
+				'scopes' => ['payment'],
+				'note'   => mb_substr('授权「' . $siteName . '」代您在本站收款，款项直接结算到您的账户', 0, 200),
+			]);
+			$status = isset($created['status']) ? (string)$created['status'] : 'pending';
+		}
+
+		$this->upsertSubchannels((int)$row['uid'], ['appid' => self::DELEGATE_PREFIX . $bindingId, 'appkey' => self::DELEGATE_KEY],
+			'KPay 代收 ' . (!empty($merchant['merchantName']) ? mb_substr($merchant['merchantName'], 0, 20) : $bindingId), $status === 'active' ? 1 : 0);
+		$DB->update('kpay_apply', [
+			'bind_pid' => self::DELEGATE_PREFIX . $bindingId, 'bound_at' => 'NOW()',
+			'sp_binding_id' => $bindingId, 'auth_status' => $status, 'auth_checked_at' => 'NOW()',
+		], ['id' => $row['id']]);
+		return $status;
+	}
+
+	/**
+	 * 向 KPay 查询授权状态并同步到本地和子通道
+	 */
+	public function refreshAuthorization($row)
+	{
+		$bindingId = (int)$row['sp_binding_id'];
+		if ($bindingId <= 0) {
+			return null;
+		}
+		$merchant = $this->client()->api('GET', '/pay/api/service-provider/merchants/' . $bindingId);
+		$status = self::paymentAuthStatus(isset($merchant['authorization']) ? $merchant['authorization'] : null);
+		if (isset($merchant['status']) && $merchant['status'] !== 'active') {
+			$status = 'revoked';
+		}
+		$this->applyAuthorizationStatus($bindingId, $status);
+		return $status;
+	}
+
+	/**
+	 * 授权变化：已授权时启用代收子通道，其余状态停用
+	 */
+	public function applyAuthorizationStatus($bindingId, $status)
+	{
+		global $DB;
+		$bindingId = (int)$bindingId;
+		$rows = $DB->getAll("SELECT id,uid FROM pre_kpay_apply WHERE sp_binding_id=:b", [':b' => $bindingId]);
+		foreach ($rows as $row) {
+			$DB->update('kpay_apply', ['auth_status' => (string)$status, 'auth_checked_at' => 'NOW()'], ['id' => $row['id']]);
+			foreach ($this->setting('bind_channels') as $channelId) {
+				$sub = $DB->getRow("SELECT id,info FROM pre_subchannel WHERE channel=:c AND uid=:u LIMIT 1", [':c' => $channelId, ':u' => (int)$row['uid']]);
+				$info = $sub && $sub['info'] ? json_decode($sub['info'], true) : null;
+				if (is_array($info) && isset($info['appid']) && self::delegatedBindingId($info['appid']) === $bindingId) {
+					$DB->update('subchannel', ['status' => $status === 'active' ? 1 : 0], ['id' => $sub['id']]);
+				}
+			}
+		}
+		return count($rows);
+	}
+
+	/**
+	 * 在「旗下商户」里直接申请或撤回代收款授权
+	 */
+	public function requestAuthorization($bindingId)
+	{
+		global $conf;
+		$siteName = !empty($conf['sitename']) ? $conf['sitename'] : '本站';
+		$result = $this->client()->api('POST', '/pay/api/service-provider/merchants/' . (int)$bindingId . '/authorization', [], [
+			'scopes' => ['payment'],
+			'note'   => mb_substr('授权「' . $siteName . '」代您在本站收款，款项直接结算到您的账户', 0, 200),
+		]);
+		$this->applyAuthorizationStatus($bindingId, isset($result['status']) ? $result['status'] : 'pending');
+		return $result;
+	}
+
+	public function cancelAuthorization($bindingId)
+	{
+		$result = $this->client()->api('DELETE', '/pay/api/service-provider/merchants/' . (int)$bindingId . '/authorization');
+		$this->applyAuthorizationStatus($bindingId, isset($result['status']) ? $result['status'] : 'revoked');
+		return $result;
+	}
+
+	// ─── 事件推送 ───────────────────────────────────────────────────
+
+	/**
+	 * 把服务商的事件推送地址设为本站。KPay 一个服务商只有一个推送地址，已经指向别处时
+	 * 需要 $force 确认才覆盖。
+	 *
+	 * @return array ['configured' => bool, 'url' => string, 'currentUrl' => string]
+	 */
+	public function enableWebhook($force = false)
+	{
+		$url = $this->webhookUrl();
+		if ($url === '') {
+			throw new Exception('请先在设置里选择回调通道并保存');
+		}
+		$client = $this->client();
+		$current = $client->api('GET', '/pay/api/service-provider/webhook');
+		$currentUrl = !empty($current['configured']) && isset($current['url']) ? (string)$current['url'] : '';
+		if ($currentUrl !== '' && $currentUrl !== $url && !$force) {
+			return ['configured' => false, 'url' => $url, 'currentUrl' => $currentUrl];
+		}
+		$saved = $client->api('PUT', '/pay/api/service-provider/webhook', [], [
+			'url' => $url, 'events' => self::WEBHOOK_EVENTS, 'status' => 'active',
+		]);
+		$secret = isset($saved['secret']) ? (string)$saved['secret'] : '';
+		if ($secret === '' && ($this->setting('webhook_secret') === '' || $currentUrl !== $url)) {
+			$rotated = $client->api('POST', '/pay/api/service-provider/webhook/rotate-secret');
+			$secret = isset($rotated['secret']) ? (string)$rotated['secret'] : '';
+			if ($secret === '') {
+				throw new Exception('KPay 没有返回推送签名密钥');
+			}
+		}
+		$updates = ['webhook_url' => $url];
+		if ($secret !== '') {
+			$updates['webhook_secret'] = $secret;
+		}
+		$this->updateSettings($updates);
+		return ['configured' => true, 'url' => $url, 'currentUrl' => $url];
+	}
+
+	public function disableWebhook()
+	{
+		$client = $this->client();
+		$current = $client->api('GET', '/pay/api/service-provider/webhook');
+		if (!empty($current['configured']) && isset($current['url']) && $current['url'] === $this->setting('webhook_url')) {
+			$client->api('DELETE', '/pay/api/service-provider/webhook');
+		}
+		$this->updateSettings(['webhook_url' => '', 'webhook_secret' => '']);
+	}
+
+	public function webhookStatus()
+	{
+		$view = $this->client()->api('GET', '/pay/api/service-provider/webhook');
+		$ours = !empty($view['configured']) && isset($view['url']) && $view['url'] === $this->setting('webhook_url') && $this->setting('webhook_secret') !== '';
+		return [
+			'enabled'         => $ours,
+			'url'             => isset($view['url']) ? (string)$view['url'] : '',
+			'expectedUrl'     => $this->webhookUrl(),
+			'status'          => isset($view['status']) ? (string)$view['status'] : '',
+			'lastDeliveredAt' => isset($view['lastDeliveredAt']) ? $view['lastDeliveredAt'] : null,
+			'lastFailedAt'    => isset($view['lastFailedAt']) ? $view['lastFailedAt'] : null,
+			'lastError'       => isset($view['lastError']) ? (string)$view['lastError'] : '',
+		];
+	}
+
+	public function testWebhook()
+	{
+		return $this->client()->api('POST', '/pay/api/service-provider/webhook/test');
+	}
+
+	/**
+	 * 处理一条已验签的推送事件。推送只是通知，同一事件重复到达时结果一样
+	 */
+	public function handleEvent(array $event)
+	{
+		$type = isset($event['type']) ? (string)$event['type'] : '';
+		$data = isset($event['data']) && is_array($event['data']) ? $event['data'] : [];
+		if ($type === 'onboarding.status_changed' && !empty($data['applicationNo'])) {
+			return $this->applyCallback($data);
+		}
+		if ($type === 'merchant.authorization_changed' && !empty($data['bindingId'])) {
+			$status = self::paymentAuthStatus($data);
+			$this->applyAuthorizationStatus((int)$data['bindingId'], $status);
+			return true;
+		}
+		return false;
+	}
+
+	private function updateSettings(array $updates)
+	{
+		global $DB;
+		$next = array_merge($this->settings(), $updates);
+		$DB->exec("REPLACE INTO pre_config SET k=:k, v=:v", [':k' => self::SETTING_KEY, ':v' => json_encode($next, JSON_UNESCAPED_UNICODE)]);
+		$this->settings = $next;
 	}
 
 	/**
@@ -520,17 +861,29 @@ class KpayService
 
 	public function serviceProvider($resource, array $query)
 	{
-		$allowed = ['merchants', 'commissions', 'rate-changes', 'complaints'];
+		$allowed = ['overview', 'merchants', 'commissions', 'rate-changes', 'complaints', 'orders', 'refunds', 'settlements', 'opened-merchants', 'onboarding'];
 		if (!in_array($resource, $allowed, true)) {
 			throw new Exception('不支持的查询');
 		}
 		$clean = [];
-		foreach (['page', 'pageSize', 'status', 'activity', 'type', 'keyword', 'orderNo'] as $field) {
-			if (isset($query[$field]) && trim((string)$query[$field]) !== '') {
+		foreach (['page', 'pageSize', 'status', 'activity', 'type', 'keyword', 'orderNo', 'startTime', 'endTime', 'startDate', 'endDate', 'bindingId', 'provider', 'group'] as $field) {
+			if (isset($query[$field]) && is_scalar($query[$field]) && trim((string)$query[$field]) !== '') {
 				$clean[$field] = trim((string)$query[$field]);
 			}
 		}
 		return $this->client()->api('GET', '/pay/api/service-provider/' . $resource, $clean);
+	}
+
+	/**
+	 * 下载某天（北京时间）的对账单 CSV
+	 */
+	public function dailyStatement($date)
+	{
+		$date = trim((string)$date);
+		if (!preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date)) {
+			throw new Exception('日期格式应为 YYYY-MM-DD');
+		}
+		return $this->client()->apiRaw('GET', '/pay/api/service-provider/statements/daily', ['date' => $date]);
 	}
 
 	public function submitRateChange(array $input)

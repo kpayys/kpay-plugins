@@ -81,6 +81,9 @@ function kpay_apply_action(KpayService $service, $act, $uid, $isAdmin)
 			if (!$isAdmin && !$service->setting('user_bind')) {
 				throw new Exception('请联系平台完成收款账户绑定');
 			}
+			if (!$isAdmin && $service->setting('bind_mode') !== 'epay_key') {
+				throw new Exception('不支持的操作');
+			}
 			if (!$isAdmin && !in_array($current['status'], ['approved', 'partial_approved', 'partially_approved'], true)) {
 				throw new Exception('进件审核通过后才能操作');
 			}
@@ -95,18 +98,49 @@ function kpay_apply_action(KpayService $service, $act, $uid, $isAdmin)
 			if (!$isAdmin && !in_array($current['status'], ['approved', 'partial_approved', 'partially_approved'], true)) {
 				throw new Exception('进件审核通过后才能绑定');
 			}
-			$count = $service->bind($current, isset($_POST['pid']) ? $_POST['pid'] : '', isset($_POST['key']) ? $_POST['key'] : '');
-			return kpay_apply_detail($service, $service->latestForUser($uid), $isAdmin, '已绑定，生成 ' . $count . ' 个收款通道');
+			// 商户只能用设置里的方式绑定，也不能自己指定渠道商户ID；管理员两种都可以
+			$mode = $isAdmin && isset($_POST['mode']) ? (string)$_POST['mode'] : (string)$service->setting('bind_mode');
+			if ($mode === 'epay_key') {
+				$count = $service->bind($current, isset($_POST['pid']) ? $_POST['pid'] : '', isset($_POST['key']) ? $_POST['key'] : '');
+				return kpay_apply_detail($service, $service->latestForUser($uid), $isAdmin, '已绑定，生成 ' . $count . ' 个收款通道');
+			}
+			$status = $service->bindDelegated($current, $isAdmin && isset($_POST['bindingId']) ? (int)$_POST['bindingId'] : 0);
+			$message = $status === 'active' ? '已绑定，可以开始收款' : '已向商户发起授权申请，商户在 KPay 同意后自动开通收款';
+			return kpay_apply_detail($service, $service->latestForUser($uid), $isAdmin, $message);
 	}
 	throw new Exception('不支持的操作');
 }
 
+/**
+ * 代收款授权还没生效时，打开页面顺带向 KPay 查一次（限频）
+ */
+function kpay_refresh_authorization(KpayService $service, $row, $minInterval)
+{
+	if (!$row || empty($row['sp_binding_id']) || !$service->configured()) {
+		return $row;
+	}
+	$checked = !empty($row['auth_checked_at']) ? strtotime($row['auth_checked_at']) : 0;
+	if (time() - $checked < $minInterval) {
+		return $row;
+	}
+	try {
+		$service->refreshAuthorization($row);
+	} catch (Exception $e) {
+		return $row;
+	}
+	return $service->getApply($row['id']);
+}
+
 function kpay_apply_detail(KpayService $service, $row, $isAdmin, $message = '')
 {
+	if ($row && !empty($row['sp_binding_id'])) {
+		$row = kpay_refresh_authorization($service, $row, $row['auth_status'] === 'active' ? 300 : 10);
+	}
 	$data = [
 		'configured'  => $service->configured(),
 		'selfService' => (bool)$service->setting('self_service') || $isAdmin,
 		'userBind'    => (bool)$service->setting('user_bind') || $isAdmin,
+		'bindMode'    => $service->setting('bind_mode') === 'epay_key' ? 'epay_key' : 'delegate',
 		'hasAlipay'   => in_array('alipay', (array)$service->setting('providers'), true),
 		'materials'   => KpayService::MATERIAL_TYPES,
 		'apply'       => null,
@@ -122,6 +156,9 @@ function kpay_apply_detail(KpayService $service, $row, $isAdmin, $message = '')
 			'bindPid'          => $row['bind_pid'],
 			'boundAt'          => $row['bound_at'],
 			'updatetime'       => $row['updatetime'],
+			'delegated'        => !empty($row['sp_binding_id']),
+			'authStatus'       => !empty($row['sp_binding_id']) ? (string)$row['auth_status'] : '',
+			'authLabel'        => !empty($row['sp_binding_id']) ? KpayService::authLabel((string)$row['auth_status']) : '',
 		];
 		if ($isAdmin) {
 			$data['apply']['applicationNo'] = $row['application_no'];

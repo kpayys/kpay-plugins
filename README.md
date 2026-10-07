@@ -17,7 +17,7 @@
 | 系统 | 能做什么 | 说明 | 安装包 |
 |---|---|---|---|
 | 异次元发卡（acg-faka） | 商品下单、余额充值 | [安装说明](acg-faka/README.md) | `kpay-acg-faka.zip` |
-| 彩虹易支付 | 上游通道、后台退款；**服务商模式**：下级商户进件、绑定收款、分润、费率调整、投诉 | [安装说明](epay/README.md) | `kpay-epay.zip` |
+| 彩虹易支付 | 上游通道、后台退款；**服务商模式**：下级商户进件、商户授权后代收款、旗下交易与对账单、分润、费率调整、投诉 | [安装说明](epay/README.md) | `kpay-epay.zip` |
 | 超级支付系统 | 直连渠道、退款、查单 | [安装说明](superpay/README.md) | `kpay-superpay.zip` |
 | WHMCS | 账单支付、退款、非人民币币种换算 | [安装说明](whmcs/README.md) | `kpay-whmcs.zip` |
 | WooCommerce（WordPress） | 结账收款、退款，支持区块结账和 HPOS | [安装说明](woocommerce/README.md) | `kpay-for-woocommerce.zip` |

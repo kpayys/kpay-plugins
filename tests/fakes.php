@@ -45,7 +45,7 @@ class FakeDB
 		$this->ids[$table] = isset($this->ids[$table]) ? $this->ids[$table] + 1 : 1;
 		$data = array_map([$this, 'value'], $data);
 		$data['id'] = $this->ids[$table];
-		foreach (['application_no', 'status_label', 'activation_status', 'merchant_code', 'review_remark', 'summary', 'bind_pid', 'bound_at', 'updatetime'] as $column) {
+		foreach (['application_no', 'status_label', 'activation_status', 'merchant_code', 'review_remark', 'summary', 'bind_pid', 'bound_at', 'updatetime', 'sp_binding_id', 'auth_status', 'auth_checked_at'] as $column) {
 			if ($table === 'kpay_apply' && !array_key_exists($column, $data)) {
 				$data[$column] = null;
 			}
@@ -85,7 +85,7 @@ class FakeDB
 		if (preg_match("/FROM pre_config WHERE k='([^']+)'/i", $sql, $m)) {
 			return isset($this->tables['config'][$m[1]]) ? [['v' => $this->tables['config'][$m[1]]['v']]] : [];
 		}
-		if (preg_match('/FROM pre_(\w+) WHERE (.+?)( ORDER BY id DESC)? LIMIT 1/i', $sql, $m)) {
+		if (preg_match('/FROM pre_(\w+) WHERE (.+?)( ORDER BY id DESC)?( LIMIT 1)?$/i', trim($sql), $m)) {
 			$rows = array_values($this->tables[$m[1]]);
 			preg_match_all('/(\w+)=(:\w+)/', $m[2], $conditions, PREG_SET_ORDER);
 			$rows = array_values(array_filter($rows, function ($row) use ($conditions, $params) {
@@ -98,6 +98,9 @@ class FakeDB
 			}));
 			if (!empty($m[3])) {
 				$rows = array_reverse($rows);
+			}
+			if (empty($m[4])) {
+				return $rows;
 			}
 			return $rows ? [$rows[0]] : [];
 		}
@@ -124,7 +127,12 @@ class FakeKpayClient extends KpayClient
 		if (!isset(self::$responses[$key]) || !self::$responses[$key]) {
 			throw new Exception('没有预设响应：' . $key);
 		}
-		return ['status' => 200, 'body' => json_encode(array_shift(self::$responses[$key]), JSON_UNESCAPED_UNICODE)];
+		$payload = array_shift(self::$responses[$key]);
+		// ['__raw' => 字符串] 表示原样返回（对账单 CSV）
+		if (isset($payload['__raw'])) {
+			return ['status' => 200, 'body' => $payload['__raw']];
+		}
+		return ['status' => 200, 'body' => json_encode($payload, JSON_UNESCAPED_UNICODE)];
 	}
 
 	public static function reset()
@@ -155,6 +163,31 @@ class TestKpayService extends KpayService
 	{
 		return new FakeKpayClient($this->setting('apiurl'));
 	}
+}
+
+/**
+ * 模拟 KPay 推送：按服务端规则签名，把请求头写进 $_SERVER、请求体交给 requestBody()
+ */
+function fake_kpay_push($secret, $event, $body, $timestamp = null)
+{
+	fake_kpay_push_clear();
+	$timestamp = $timestamp !== null ? (string)$timestamp : (string)time();
+	$nonce = bin2hex(random_bytes(8));
+	$bodyHash = hash('sha256', $body);
+	$_SERVER['HTTP_X_KPAY_EVENT'] = $event;
+	$_SERVER['HTTP_X_KPAY_TIMESTAMP'] = $timestamp;
+	$_SERVER['HTTP_X_KPAY_NONCE'] = $nonce;
+	$_SERVER['HTTP_X_KPAY_BODY_SHA256'] = $bodyHash;
+	$_SERVER['HTTP_X_KPAY_SIGNATURE'] = hash_hmac('sha256', implode("\n", [$timestamp, $nonce, $event, $bodyHash]), $secret);
+	KpayClient::$inputOverride = $body;
+}
+
+function fake_kpay_push_clear()
+{
+	foreach (['EVENT', 'TIMESTAMP', 'NONCE', 'BODY_SHA256', 'SIGNATURE'] as $name) {
+		unset($_SERVER['HTTP_X_KPAY_' . $name]);
+	}
+	KpayClient::$inputOverride = null;
 }
 
 /**

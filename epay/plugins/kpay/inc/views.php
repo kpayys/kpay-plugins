@@ -37,7 +37,17 @@ function kpay_render_apply_form()
 
 	<div class="panel panel-default" id="kpay-bind-panel" style="display:none">
 		<div class="panel-heading font-bold">绑定收款账户</div>
-		<div class="panel-body">
+		<div class="panel-body" data-kpay-mode="delegate">
+			<div id="kpay-auth-state" class="alert alert-info" style="display:none"></div>
+			<ol class="text-muted" style="padding-left:18px">
+				<li>登录 KPay，打开平台发给你的开通链接，完成开通。</li>
+				<li>回到这里点「开通收款」，KPay 会收到一条授权申请。</li>
+				<li>在 KPay「账户中心 · 服务商授权」里同意。同意后这里自动开始收款，款项直接结算到你的 KPay 账户，你可以随时在 KPay 撤回。</li>
+			</ol>
+			<button type="button" class="btn btn-success" data-kpay-act="bind" id="kpay-delegate-btn">开通收款</button>
+			<button type="button" class="btn btn-default" data-kpay-act="detail" id="kpay-auth-refresh" style="display:none">我已同意，刷新</button>
+		</div>
+		<div class="panel-body" data-kpay-mode="epay_key">
 			<ol class="text-muted" style="padding-left:18px">
 				<li>登录 KPay，打开平台发给你的开通链接，完成开通。</li>
 				<li>在 KPay「API 密钥」页创建「EPay 兼容 API」密钥，授权域名填 <code><?php echo htmlspecialchars(kpay_site_host(), ENT_QUOTES, 'UTF-8'); ?></code>，保存后复制页面上只显示一次的 EPay Key。</li>
@@ -249,9 +259,18 @@ function kpay_render_apply_script($ajaxUrl, $csrf, $uid, $actPrefix = '')
 			$('#kpay-confirm-list').html(links.join(''));
 			$('#kpay-submit-btn').toggle(!!view.canSubmit && data.selfService);
 			$('#kpay-new-btn').toggle(!!data.canStartNew && data.selfService);
-			$('#kpay-bound').toggle(!!apply.bindPid).text(apply.bindPid ? '已绑定收款账户 ' + apply.bindPid : '');
+			var delegatedActive = apply.delegated && apply.authStatus === 'active';
+			$('#kpay-bound').toggle(delegatedActive || (!!apply.bindPid && !apply.delegated))
+				.text(delegatedActive ? '已开通收款，款项直接结算到你的 KPay 账户' : (apply.bindPid ? '已绑定收款账户 ' + apply.bindPid : ''));
 			var approved = ['approved', 'partial_approved', 'partially_approved'].indexOf(view.status) >= 0;
-			$('#kpay-bind-panel').toggle(approved && data.userBind);
+			var mode = data.bindMode;
+			$('#kpay-bind-panel').toggle(approved && data.userBind && !delegatedActive && !(mode === 'epay_key' && apply.bindPid && !apply.delegated));
+			$('#kpay-bind-panel [data-kpay-mode]').each(function () { $(this).toggle($(this).data('kpay-mode') === mode); });
+			var waiting = apply.delegated && apply.authStatus === 'pending';
+			$('#kpay-auth-state').toggle(apply.delegated && !delegatedActive)
+				.text(waiting ? '已发出授权申请，请到 KPay「账户中心 · 服务商授权」里同意。' : (apply.delegated ? '当前状态：' + apply.authLabel + '。可以重新点「开通收款」再次申请。' : ''));
+			$('#kpay-delegate-btn').toggle(!waiting);
+			$('#kpay-auth-refresh').toggle(waiting);
 			fillForm(view.form || {});
 		} else {
 			$('#kpay-status-panel').toggle(!!apply && !state.startNew);

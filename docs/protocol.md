@@ -111,3 +111,25 @@ X-KPay-Signature: hex(hmac_sha256(callbackSecret, "<时间戳>\n<nonce>\n<event>
 ```
 
 验签后按 `eventId` 幂等处理并返回 2xx，非 2xx 会重试。回调只作通知，关键状态以查询接口为准。
+
+## 服务商代收款
+
+商户在 KPay 同意服务商的「代为收款」授权后，服务商用自己的平台 API 密钥调 V3 支付接口，请求头带上 `X-KPay-Sub-Merchant: <渠道商户ID>`，就以这个商户的身份下单、查单、关单、退款，款项照常由机构直接结算给商户。商户不用建 EPay 密钥，也不用验证你的域名。
+
+1. `POST /pay/api/service-provider/merchants/<渠道商户ID>/authorization`，请求体 `{"scopes":["payment"],"note":"给商户看的说明"}`，商户在 KPay「账户中心 · 服务商授权」同意后生效。授权状态在 `GET /pay/api/service-provider/merchants/<渠道商户ID>` 的 `authorization` 里。
+2. 下单 `POST /pay/api/v3/order/create`：
+
+```json
+{"merchantOrderNo":"你的订单号","amount":58,"productName":"会员充值","paymentMode":"checkout",
+ "notifyUrl":"https://你的域名/notify","returnUrl":"https://你的域名/return"}
+```
+
+   返回的 `checkoutUrl` 是相对路径 `/checkout/xxx`，拼到收银台域名上（`api.kaipay.cn` 对应 `pay.kaipay.cn`），让付款人打开。
+3. 支付结果 POST 到 `notifyUrl`，JSON 请求体（`orderNo`、`merchantOrderNo`、`amount`、`status`，支付成功时 `status` 为 `paid`），签名头同上面的进件回调，密钥是这把 API 密钥的 Secret，事件名形如 `payment.order.paid`。
+4. 查单 `GET /pay/api/v3/order/query?orderNo=`、退款 `POST /pay/api/v3/order/refund`（`orderNo`、`refundAmount`、`refundRequestNo`、`reason`），都要用下单时的同一把密钥并带同样的 `X-KPay-Sub-Merchant`。
+
+密钥要同时勾选「代商户收款」和创建订单 / 查询订单 / 发起退款。实现参考易支付插件的 [`_createDelegatedOrder`](../epay/plugins/kpay/kpay_plugin.php)。
+
+## 服务商事件推送
+
+`PUT /pay/api/service-provider/webhook`（`{"url":"...","events":[]}`）设置一个推送地址，首次设置时返回只显示一次的签名密钥。订单支付、退款、机构结算、分润、投诉、进件状态、商户授权变化都会推送，请求体 `{"id","type","createdAt","workspaceNo","data"}`，签名方式同进件回调，按 `X-KPay-Event-ID` 去重。旗下订单、退款、机构结算用 `GET /pay/api/service-provider/orders|refunds|settlements` 查，某天的对账单 CSV 用 `GET /pay/api/service-provider/statements/daily?date=YYYY-MM-DD` 下载。
